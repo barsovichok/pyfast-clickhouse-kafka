@@ -1,0 +1,118 @@
+# Use postgres/example user/password credentials
+version: '3.9'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    restart: always
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_MESSAGE_MAX_BYTES: 200000000
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 200000000
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8082:8080"
+    depends_on:
+      - kafka
+      - zookeeper
+    environment:
+      DYNAMIC_CONFIG_ENABLED: true
+
+  clickhouse:
+    image: yandex/clickhouse-server:latest
+    ports:
+      - "8123:8123"  # HTTP интерфейс
+      - "9000:9000"  # TCP интерфейс
+      - "9009:9009"  # Interserver HTTP
+    volumes:
+    - ./:/docker-entrypoint-initdb.d
+    restart: always
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8123 || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  tabix:
+    image: spoonest/clickhouse-tabix-web-client:latest
+    container_name: tabix
+    ports:
+      - "8080:80"
+    depends_on:
+      - clickhouse
+
+  app:
+    #image: pyfast
+    build: .
+    ports:
+      - "8002:80"
+    environment:
+      DATABASE_ENGINE: postgresql+psycopg2://postgres:example@db:5432/postgres
+      DATABASE_POOL_SIZE: 100
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      CLICKHOUSE_URL: "http://localhost:8123"
+    depends_on:
+      - kafka
+      - clickhouse
+    networks:
+      - default
+
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  db:
+    image: postgres
+    restart: always
+    # set shared memory limit when using docker-compose
+    shm_size: 128mb
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # or set shared memory limit when deploy via swarm stack
+    #volumes:
+    #  - type: tmpfs
+    #    target: /dev/shm
+    #    tmpfs:
+    #      size: 134217728 # 128*2^20 bytes = 128Mb
+    environment:
+      POSTGRES_PASSWORD: example
+
+    ports:
+      - "5432:5432"
+
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - "8081:8080"
+
+volumes:
+  db-data:
+  clickhouse_data:
